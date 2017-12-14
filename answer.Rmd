@@ -1,0 +1,175 @@
+---
+title: "How well do you work out?"
+author: "IC"
+date: "Decemeber 14, 2017"
+output: 
+  html_document: 
+        fig_height: 8
+        fig_width: 14
+subtitle: 'Coursera Week 32: Predicting the motion of the ocean'
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+## Introduction
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
+-- _From course website_
+
+
+## Data (files and cleaning)
+
+### Files
+The data was supplied by the course convenor and can be found at
+1. https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv and
+2. https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data was provieded from http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. 
+
+### Cleaning
+
+Columns from the data set which were only or largely containing NA values were removed from the analysis. Also, additional columns were removed which served no use. With the final cleaned data set, the analysis could begin. 
+
+The training set was cleaned by: 
+
+1.  Change all the blank spaces to NA.
+
+2.  Eliminated all fields where the count of NA > 0. 
+
+3.  Eliminate additional fields which are not important.
+
+4.  Convert user name and classe fields to factor fields.
+
+Herein lies the code used to clean the training data set:
+
+```{r, eval = T,echo=T,warning=F,message=F}
+# Clear Global Environment
+rm(list = ls())
+options(warn = -1)
+
+# Check for packages, and install if not there
+if(!require(rstudioapi)) install.packages("rstudioapi")
+if(!require(dplyr)) install.packages("dplyr")
+if(!require(zoo)) install.packages("zoo")
+if(!require(tidyr)) install.packages("tidyr")
+if(!require(bigrquery)) install.packages("bigrquery")
+if(!require(lubridate)) install.packages("lubridate")
+if(!require(caret)) install.packages("caret")
+if(!require(e1071)) install.packages("e1071")
+if(!require(pgmm)) install.packages("pgmm")
+if(!require(ggplot2)) install.packages("ggplot2")
+if(!require(doParallel)) install.packages("doParallel")
+if(!require(parallel)) install.packages("parallel")
+if(!require(snow)) install.packages("snow")
+if(!require(randomForest)) install.packages("randomForest")
+
+# Imports packages
+require("rstudioapi")
+require("dplyr")
+require("zoo")
+require("tidyr")
+require("bigrquery")
+require("lubridate")
+require("caret")
+require("e1071")
+require("pgmm")
+require("ggplot2")
+require("parallel")
+require("doParallel")
+require("snow")
+require("randomForest")
+```
+```{r, eval = F}
+# Working directory
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+# Load in training set
+trData = read.csv("pml-training.csv",stringsAsFactors = F) # training data from site
+
+# replace all "" with NA
+trData[trData == ""] = NA
+
+# If there are NAs in the column, record the row number and remove it
+x = NA
+for(i in 1:ncol(trData))
+{
+    if(nrow(trData[is.na(trData[,i]),])==0){x = c(x,i)}
+}
+
+x = x[!is.na(x)]; trData = trData[,x]
+
+df = trData %>% group_by(user_name,classe) %>% summarise(NUM = length(classe))
+
+# remove fields you don't need at all
+toRemove = c("X","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window")
+trData = trData[,!(names(trData) %in% toRemove)]
+
+trData$classe = factor(trData$classe)
+trData$user_name = factor(trData$user_name)
+```
+
+### Model Creation
+
+3 Models were created to model the outcome: Rpart, GBM and RF. These models were developed using a **random sampling** cross validation method. The training data was split into 2 sets - **training set** (75% of the training set data) and a **testing set** (the remaining 25%). 
+```{r,echo = F}
+load(".RData")
+```
+
+The **training set** was trained on 3 models. All 3 models used a PCA preprocessing to increase the level of correlation between fields, which increases the level of accuracy of the model. For the random forest model (modFitrf), to increase speed, mtry was set to 3. This was a trade off for accuracy of this model.  
+
+```{r, eval = F}
+# split training data into two sets of training and test set
+set.seed(47586)
+
+trainValues = createDataPartition(y=trData$classe,p=0.75, list=FALSE)
+
+training = trData[trainValues,]
+test = trData[-trainValues,]
+
+# use of Random Forest methods with prox
+
+modFitrpart = train(classe ~.,data = training, method = "rpart",preProcess = "pca")
+modFitgbm = train(classe ~.,data = training[,-1], method = "gbm",preProcess = "pca", verbose = F)
+modFitrf = train(classe ~.,data = training, method = "rf",preProcess = "pca", tuneGrid = data.frame(mtry = 3))
+```
+
+The models were used to predict the test set data. Using the caret package, the function *confusionMatrix* was used to determine the accuracy of each model:
+
+```{r, eval = F}
+# store confusion matrices
+cmRpart = confusionMatrix(test$classe,predict(object = modFitrpart,newdata = test))
+cmGBM = confusionMatrix(test$classe,predict(object = modFitgbm,newdata = test))
+cmRF = confusionMatrix(test$classe,predict(object = modFitrf,newdata = test))
+
+# accuracy table
+acTable = data.frame(Model = c("Rpart", "GBM", "RF"), 
+                     Accuracy = c(as.numeric(cmRpart$overall[1]), as.numeric(cmGBM$overall[1]), as.numeric(cmRF$overall[1])))
+```
+```{r}
+acTable
+```
+
+Accuracy of predicting data from the training sets were 0.3756 (rpart), 0.8558 (gbm) and 1.0000 (rf). Because we are predicting letters (A-E) and not numbers, determining in-out sample errors are rather tricky. Because we have accuracy, we can determine error by using *error = 1 - [accuracy - (1-accuracy)]/accuracy = 1-1/accuracy*. Hence the in-sample error 166 % (rpart), 16 % (gbm) and 0 % (rf). Out of sample error was 165 % (rpart), 19 % (gbm) and 2 % (rf). This suggests we should be using the RF model in order to predict the unknown values. 
+
+We can plot the data of correct(1) vs incorrect(0) predicted counts. A table of the results is attached for clarity of results.
+
+```{r, eval = F}
+# RF best model, show how good with a graph
+rfResults = data.frame(Actual = test$classe, Predicted = predict(object = modFitrf,newdata = test))
+rfResults$Same = ifelse(rfResults$Actual == rfResults$Predicted, 1, 0)
+
+rfResults = rfResults %>% group_by(Actual,Same) %>% summarise(Count = length(Actual))
+
+```
+
+
+```{r}
+as.data.frame(rfResults)
+q = qplot(x = Actual, y = Count,data = rfResults, cex = 1.5 ,colour = factor(Same),main = "Graph showing the number of correctly/incorrectly predicted values")
+q
+```
+
+## Summary
+
+3 models were created in order to determine the whether we could predict the movement of someone working out. Data was cross validated by using a random sampling method. The data was preprocessed using PCA to increase the relationships between fields. The random forest model had the smallest in-sample error (0 %) and out-sample error (2 %). Even though the data was highly fitted to the training set, there was a small change out of sample. 

@@ -1,0 +1,17 @@
+base
+rstudioapi
+dplyr
+zoo
+tidyr
+bigrquery
+lubridate
+lattice
+ggplot2
+caret
+e1071
+pgmm
+foreach
+iterators
+doParallel
+snow
+randomForest
